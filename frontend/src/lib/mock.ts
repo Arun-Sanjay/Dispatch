@@ -1,0 +1,50 @@
+import type { SimulatorState } from "@/lib/types";
+
+export const mockState: SimulatorState = {
+  time: 25,
+  algorithm: "RR",
+  tick_ms: 200,
+  quantum: 2,
+  running: "P2",
+  ready_queue: ["P3", "P1", "P4"],
+  sys_queue: ["S1"],
+  user_queue: ["P3", "P1", "P4"],
+  io_active: "P5",
+  io_queue: ["P2"],
+  gantt: [
+    "P1", "P1", "P2", "P2", "P3", "P3", "IDLE", "P4", "P4", "P1",
+    "P1", "P2", "P2", "P3", "IDLE", "P5", "P5", "P4", "P4", "P2",
+    "P2", "P1", "P3", "P3", "P2",
+  ],
+  io_gantt: [
+    "IDLE", "P3", "P3", "IDLE", "P1", "P1", "IDLE", "IDLE", "P2", "P2",
+    "IDLE", "P4", "P4", "IDLE", "IDLE", "P5", "P5", "IDLE", "P1", "P1",
+    "IDLE", "IDLE", "P3", "IDLE", "P5",
+  ],
+  completed: ["P5", "P4"],
+  metrics: {
+    avg_wt: 6.4,
+    avg_tat: 13.8,
+    avg_rt: 3.2,
+    cpu_util: 84.0,
+    makespan: 31,
+    throughput: 0.16,
+  },
+  per_process: [
+    { pid: "P1", at: 0, pr: 2, queue: "USER", st: 0, ct: 28, tat: 28, wt: 18, rt: 0 },
+    { pid: "P2", at: 1, pr: 1, queue: "SYS", st: 2, ct: null, tat: null, wt: null, rt: 1 },
+    { pid: "P3", at: 2, pr: 3, queue: "USER", st: 4, ct: null, tat: null, wt: null, rt: 2 },
+    { pid: "P4", at: 4, pr: 0, queue: "SYS", st: 7, ct: 22, tat: 18, wt: 13, rt: 3 },
+    { pid: "P5", at: 6, pr: 2, queue: "USER", st: 15, ct: 19, tat: 13, wt: 9, rt: 9 },
+  ],
+  event_log: [
+    "t=18: P5 WAITING -> READY (I/O done)",
+    "t=19: P5 READY -> RUNNING",
+    "t=20: P5 RUNNING -> DONE",
+    "t=21: P2 READY -> RUNNING",
+    "t=23: P2 RUNNING -> READY (time slice)",
+    "t=23: P3 READY -> RUNNING",
+    "t=25: P3 RUNNING -> READY (time slice)",
+    "t=25: P2 READY -> RUNNING",
+  ],
+};
