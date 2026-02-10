@@ -1,16 +1,20 @@
-from typing import Any, Dict, List
+from math import sqrt
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, HTTPException
 
 from app.engine import Process, compare_all_algorithms
 from app.session import (
     add_process,
+    clear_added_processes,
     get_compare_processes,
     get_settings,
     get_state,
     init_session,
+    remove_added_process,
     reset_session,
     run_session,
+    set_config,
     tick_session,
 )
 
@@ -41,6 +45,89 @@ def _to_process(item: Dict[str, Any]) -> Process:
     )
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _compute_workload(processes: List[Process]) -> Dict[str, float]:
+    cpu_bursts: List[int] = []
+    total_io = 0
+    arrivals: List[int] = []
+
+    for process in processes:
+        arrivals.append(int(process.arrival_time))
+        for burst in list(process.cpu_bursts or []):
+            cpu_bursts.append(int(burst))
+        for io_burst in list(process.io_bursts or []):
+            total_io += int(io_burst)
+
+    total_cpu = sum(cpu_bursts)
+    n_procs = len(processes)
+    burst_count_total = len(cpu_bursts)
+    avg_cpu = (total_cpu / burst_count_total) if burst_count_total else 0.0
+    var_cpu = 0.0
+    if burst_count_total > 0:
+        var_cpu = sum((burst - avg_cpu) ** 2 for burst in cpu_bursts) / burst_count_total
+    std_cpu = sqrt(var_cpu) if var_cpu > 0 else 0.0
+    arrival_spread = (max(arrivals) - min(arrivals)) if arrivals else 0
+
+    return {
+        "total_cpu": float(total_cpu),
+        "total_io": float(total_io),
+        "io_ratio": float(total_io / max(total_cpu, 1)),
+        "avg_cpu_burst": float(avg_cpu),
+        "std_cpu_burst": float(std_cpu),
+        "burst_variance": float(std_cpu / max(avg_cpu, 1.0)),
+        "n_procs": float(n_procs),
+        "arrival_spread": float(arrival_spread),
+        "burst_count_total": float(burst_count_total),
+    }
+
+
+def _normalize_compare_row(raw: Dict[str, Any]) -> Dict[str, Any]:
+    rows = raw.get("_rows") or []
+    per_process: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        def _maybe_int(value: Any) -> Optional[int]:
+            if value in {"-", None}:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        per_process.append(
+            {
+                "pid": str(row.get("PID", "")),
+                "at": int(row.get("AT", 0)),
+                "pr": int(row.get("PR", 0)),
+                "queue": str(row.get("Q", "USER")),
+                "st": _maybe_int(row.get("ST")),
+                "ct": _maybe_int(row.get("CT")),
+                "tat": _maybe_int(row.get("TAT")),
+                "wt": _maybe_int(row.get("WT")),
+                "rt": _maybe_int(row.get("RT")),
+            }
+        )
+
+    return {
+        "algorithm": str(raw.get("algorithm", "FCFS")),
+        "avg_wt": _safe_float(raw.get("avg_wt", 0.0)),
+        "avg_tat": _safe_float(raw.get("avg_tat", 0.0)),
+        "avg_rt": _safe_float(raw.get("avg_rt", 0.0)),
+        "cpu_util": _safe_float(raw.get("cpu_util", 0.0)),
+        "makespan": int(raw.get("makespan", 0)),
+        "throughput": _safe_float(raw.get("throughput", 0.0)),
+        "per_process": per_process,
+    }
+
+
 @router.get("/health")
 def health() -> Dict[str, bool]:
     return {"ok": True}
@@ -63,9 +150,36 @@ def sim_run(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, A
 
 
 @router.post("/sim/add")
-def sim_add(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+def sim_add(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, bool]:
     process_payload = payload.get("process") if isinstance(payload.get("process"), dict) else payload
-    return add_process(process_payload)
+    try:
+        add_process(process_payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"ok": True}
+
+
+@router.post("/sim/clear_added")
+def sim_clear_added() -> Dict[str, bool]:
+    clear_added_processes()
+    return {"ok": True}
+
+
+@router.post("/sim/remove/{pid}")
+def sim_remove(pid: str) -> Dict[str, bool]:
+    try:
+        remove_added_process(pid)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"ok": True}
+
+
+@router.post("/sim/config")
+def sim_config(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    try:
+        return set_config(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/sim/state")
@@ -74,7 +188,7 @@ def sim_state() -> Dict[str, Any]:
 
 
 @router.post("/sim/compare")
-def sim_compare(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, List[Dict[str, Any]]]:
+def sim_compare(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
     order = {"FCFS": 0, "SJF": 1, "PRIORITY": 2, "RR": 3, "MLQ": 4}
 
     payload_processes = payload.get("processes")
@@ -97,22 +211,13 @@ def sim_compare(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[st
         mlq_user_quantum=mlq_user_quantum,
     )
 
-    normalized: List[Dict[str, Any]] = []
-    for r in results:
-        normalized.append(
-            {
-                "algorithm": str(r.get("algorithm", "FCFS")),
-                "avg_wt": float(r.get("avg_wt", 0.0)),
-                "avg_tat": float(r.get("avg_tat", 0.0)),
-                "avg_rt": float(r.get("avg_rt", 0.0)),
-                "cpu_util": float(r.get("cpu_util", 0.0)),
-                "makespan": int(r.get("makespan", 0)),
-                "throughput": float(r.get("throughput", 0.0)),
-            }
-        )
+    normalized = [_normalize_compare_row(result) for result in results]
 
     normalized.sort(key=lambda row: order.get(row["algorithm"], 999))
-    return {"results": normalized}
+    return {
+        "results": normalized,
+        "workload": _compute_workload(processes),
+    }
 
 
 @router.post("/sim/reset")

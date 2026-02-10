@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import { NavBar } from "@/components/shell/NavBar";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,6 +31,7 @@ export default function RootLayout({
         <div className="app-bg" aria-hidden />
         <NavBar />
         <div className="relative z-10">{children}</div>
+        <Toaster />
       </body>
     </html>
   );

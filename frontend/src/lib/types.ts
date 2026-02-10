@@ -1,4 +1,6 @@
 export type Algorithm = "FCFS" | "SJF" | "PRIORITY" | "RR" | "MLQ";
+export type AlgorithmMode = "FCFS" | "SJF" | "PRIORITY_NP" | "PRIORITY_P" | "RR" | "MLQ";
+export type OptimizeFor = "throughput" | "responsiveness" | "fairness";
 export type QueueType = "SYS" | "USER";
 
 export interface ProcessInput {
@@ -34,6 +36,7 @@ export interface PerProcessRow {
 export interface SimulatorState {
   time: number;
   algorithm: Algorithm;
+  preemptive?: boolean;
   tick_ms: number;
   quantum: number;
   running: string;

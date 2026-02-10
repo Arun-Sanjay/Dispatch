@@ -58,6 +58,7 @@ def default_state(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {
         "time": 0,
         "algorithm": str(cfg.get("algorithm", "FCFS")),
+        "preemptive": bool(cfg.get("preemptive_priority", True)),
         "tick_ms": _safe_int(cfg.get("tick_ms", 200), 200),
         "quantum": _safe_int(cfg.get("quantum", 2), 2),
         "running": "IDLE",
@@ -179,6 +180,9 @@ def serialize_state(
         {
             "time": _safe_int(time_value, 0),
             "algorithm": str(algorithm),
+            "preemptive": bool(
+                _get_attr(scheduler, ["preemptive_priority"], settings.get("preemptive_priority", True))
+            ),
             "tick_ms": _safe_int(settings.get("tick_ms", 200), 200),
             "quantum": _safe_int(_get_attr(scheduler, ["quantum"], settings.get("quantum", 2)), 2),
             "running": _pid_of(running_obj) if running_obj is not None else "IDLE",

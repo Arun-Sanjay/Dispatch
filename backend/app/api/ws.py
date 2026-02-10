@@ -8,6 +8,7 @@ from app.session import (
     init_session,
     reset_session,
     run_session,
+    set_config,
     set_quantum,
     set_speed,
     tick_session,
@@ -39,7 +40,12 @@ async def ws_state(websocket: WebSocket) -> None:
             elif mtype == "run":
                 run_session(int(msg.get("steps", 1)))
             elif mtype == "add_process":
-                add_process(msg.get("process") or {})
+                try:
+                    add_process(msg.get("process") or {})
+                except ValueError:
+                    pass
+            elif mtype == "config":
+                set_config(msg)
             elif mtype == "reset":
                 reset_session()
             elif mtype == "set_speed":
