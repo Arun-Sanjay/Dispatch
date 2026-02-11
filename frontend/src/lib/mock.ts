@@ -21,6 +21,11 @@ export const mockState: SimulatorState = {
     "IDLE", "P4", "P4", "IDLE", "IDLE", "P5", "P5", "IDLE", "P1", "P1",
     "IDLE", "IDLE", "P3", "IDLE", "P5",
   ],
+  mem_gantt: [
+    "IDLE", "HIT:P1", "FAULT:P2", "IDLE", "HIT:P1", "HIT:P1", "IDLE", "IDLE", "FAULT:P2", "HIT:P2",
+    "IDLE", "HIT:P4", "HIT:P4", "IDLE", "IDLE", "FAULT:P5", "HIT:P5", "IDLE", "HIT:P1", "HIT:P1",
+    "IDLE", "IDLE", "HIT:P3", "IDLE", "FAULT:P5",
+  ],
   completed: ["P5", "P4"],
   metrics: {
     avg_wt: 6.4,
@@ -37,6 +42,13 @@ export const mockState: SimulatorState = {
     { pid: "P4", at: 4, pr: 0, queue: "SYS", st: 7, ct: 22, tat: 18, wt: 13, rt: 3 },
     { pid: "P5", at: 6, pr: 2, queue: "USER", st: 15, ct: 19, tat: 13, wt: 9, rt: 9 },
   ],
+  processes: [
+    { pid: "P1", state: "READY", arrival_time: 0, priority: 2, queue: "USER", burst_index: 0, remaining_in_current_burst: 2 },
+    { pid: "P2", state: "RUNNING", arrival_time: 1, priority: 1, queue: "SYS", burst_index: 0, remaining_in_current_burst: 1 },
+    { pid: "P3", state: "READY", arrival_time: 2, priority: 3, queue: "USER", burst_index: 1, remaining_in_current_burst: 2 },
+    { pid: "P4", state: "DONE", arrival_time: 4, priority: 0, queue: "SYS", burst_index: 0, remaining_in_current_burst: 0 },
+    { pid: "P5", state: "WAITING_IO", arrival_time: 6, priority: 2, queue: "USER", burst_index: 1, remaining_in_current_burst: 1 },
+  ],
   event_log: [
     "t=18: P5 WAITING -> READY (I/O done)",
     "t=19: P5 READY -> RUNNING",
@@ -47,4 +59,40 @@ export const mockState: SimulatorState = {
     "t=25: P3 RUNNING -> READY (time slice)",
     "t=25: P2 READY -> RUNNING",
   ],
+  memory: {
+    enabled: "CPU_ONLY",
+    mode: "CPU_ONLY",
+    algo: "LRU",
+    page_size: 4096,
+    num_frames: 4,
+    frames_count: 4,
+    frames: [
+      { pfn: 0, pid: "P1", vpn: 3, last_used: 24, freq: 3, ref_bit: 1 },
+      { pfn: 1, pid: "P2", vpn: 1, last_used: 23, freq: 2, ref_bit: 0 },
+      { pfn: 2, pid: "P5", vpn: 5, last_used: 25, freq: 1, ref_bit: 1 },
+      { pfn: 3, pid: null, vpn: null, last_used: 0, freq: 0, ref_bit: 0 },
+    ],
+    fault_penalty: 2,
+    faults: 0,
+    hits: 0,
+    hit_ratio: 0,
+    recent_steps: [
+      { t: 24, pid: "P2", va: 12292, vpn: 3, pfn: 0, offset: 4, hit: true },
+      { t: 25, pid: "P5", va: 20501, vpn: 5, pfn: 2, offset: 21, hit: false, fault: true, evicted: { pid: "P4", vpn: 2, pfn: 2 } },
+    ],
+    mem_gantt: [
+      "IDLE", "HIT:P1", "FAULT:P2", "IDLE", "HIT:P1", "HIT:P1", "IDLE", "IDLE", "FAULT:P2", "HIT:P2",
+      "IDLE", "HIT:P4", "HIT:P4", "IDLE", "IDLE", "FAULT:P5", "HIT:P5", "IDLE", "HIT:P1", "HIT:P1",
+      "IDLE", "IDLE", "HIT:P3", "IDLE", "FAULT:P5",
+    ],
+    page_tables: {
+      P1: [{ vpn: 3, present: true, pfn: 0, last_used: 24, freq: 3, dirty: false }],
+      P2: [{ vpn: 1, present: true, pfn: 1, last_used: 23, freq: 2, dirty: false }],
+      P5: [{ vpn: 5, present: true, pfn: 2, last_used: 25, freq: 1, dirty: false }],
+    },
+    last_translation_log: [
+      "t=24: P2 VA=12292 VPN=3 -> HIT PFN=0",
+      "t=25: P5 VA=20501 VPN=5 -> FAULT PFN=2 evict=P4:2",
+    ],
+  },
 };

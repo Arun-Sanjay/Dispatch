@@ -53,7 +53,52 @@ def _timeline(values: Any) -> List[str]:
     return ["IDLE" if _pid_of(v) in {"", "None"} else _pid_of(v) for v in list(values)]
 
 
-def default_state(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _normalize_state_label(proc: Any, scheduler: Any) -> str:
+    state = str(_get_attr(proc, ["state"], "NEW"))
+    if state == "WAITING":
+        io_active = _get_attr(scheduler, ["io_active"], None)
+        io_queue = list(_get_attr(scheduler, ["io_queue"], []) or [])
+        if proc is io_active or proc in io_queue:
+            return "WAITING_IO"
+    return state
+
+
+def _default_memory(settings: Optional[Dict[str, Any]] = None, memory_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    cfg = settings or {}
+    mem = memory_state or {}
+    frames_value = mem.get("frames", [])
+    if not isinstance(frames_value, list):
+        frames_value = []
+    num_frames = _safe_int(
+        mem.get("num_frames", mem.get("frames_count", cfg.get("num_frames", cfg.get("frames_count", 8)))),
+        8,
+    )
+    if num_frames < 1:
+        num_frames = 1
+    return {
+        "enabled": str(mem.get("enabled", mem.get("mode", cfg.get("mem_enabled", cfg.get("memory_mode", "CPU_ONLY"))))),
+        "mode": str(mem.get("mode", cfg.get("memory_mode", "CPU_ONLY"))),
+        "algo": str(mem.get("algo", cfg.get("mem_algo", "LRU"))),
+        "page_size": _safe_int(mem.get("page_size", cfg.get("page_size", 4096)), 4096),
+        "num_frames": num_frames,
+        "frames": frames_value,
+        "fault_penalty": _safe_int(mem.get("fault_penalty", cfg.get("fault_penalty_ticks", 5)), 5),
+        "faults": _safe_int(mem.get("faults", 0), 0),
+        "hits": _safe_int(mem.get("hits", 0), 0),
+        "hit_ratio": _safe_float(mem.get("hit_ratio", 0.0), 0.0),
+        "frame_state": list(mem.get("frame_state", [])),
+        "frames_count": num_frames,
+        "page_tables": dict(mem.get("page_tables", {})),
+        "recent_steps": list(mem.get("recent_steps", [])),
+        "mem_gantt": list(mem.get("mem_gantt", [])),
+        "last_translation_log": list(mem.get("last_translation_log", [])),
+    }
+
+
+def default_state(
+    settings: Optional[Dict[str, Any]] = None,
+    memory_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     cfg = settings or {}
     return {
         "time": 0,
@@ -69,6 +114,7 @@ def default_state(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "io_queue": [],
         "gantt": [],
         "io_gantt": [],
+        "mem_gantt": [],
         "completed": [],
         "metrics": {
             "avg_wt": 0.0,
@@ -79,7 +125,9 @@ def default_state(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             "throughput": 0.0,
         },
         "per_process": [],
+        "processes": [],
         "event_log": [],
+        "memory": _default_memory(cfg, memory_state),
     }
 
 
@@ -88,8 +136,9 @@ def serialize_state(
     settings: Dict[str, Any],
     all_processes: List[Any],
     event_log: Optional[List[str]] = None,
+    memory_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    state = default_state(settings)
+    state = default_state(settings, memory_state=memory_state)
     if scheduler is None:
         if event_log:
             state["event_log"] = [str(x) for x in event_log]
@@ -168,6 +217,33 @@ def serialize_state(
                 }
             )
 
+    process_summary: List[Dict[str, Any]] = []
+    for p in processes:
+        cpu_bursts = list(_get_attr(p, ["cpu_bursts"], []) or [])
+        io_bursts = list(_get_attr(p, ["io_bursts"], []) or [])
+        merged_bursts: List[int] = []
+        for idx, cpu in enumerate(cpu_bursts):
+            merged_bursts.append(_safe_int(cpu, 0))
+            if idx < len(io_bursts):
+                merged_bursts.append(_safe_int(io_bursts[idx], 0))
+        process_summary.append(
+            {
+                "pid": _pid_of(p),
+                "state": _normalize_state_label(p, scheduler),
+                "arrival_time": _safe_int(_get_attr(p, ["arrival_time"], 0), 0),
+                "priority": _safe_int(_get_attr(p, ["priority"], 0), 0),
+                "queue": str(_get_attr(p, ["queue"], "USER")),
+                "burst_index": _safe_int(_get_attr(p, ["cpu_index"], 0), 0),
+                "remaining_in_current_burst": _safe_int(_get_attr(p, ["remaining_time"], 0), 0),
+                "bursts": merged_bursts,
+                "working_set_pages": list(_get_attr(p, ["working_set_pages"], []) or []),
+                "refs_per_cpu_tick": _safe_int(_get_attr(p, ["refs_per_cpu_tick"], 1), 1),
+                "addr_pattern": str(_get_attr(p, ["addr_pattern"], "LOOP")),
+                "vm_size_bytes": _safe_int(_get_attr(p, ["vm_size_bytes"], 0), 0),
+                "address_base": _safe_int(_get_attr(p, ["address_base"], 0), 0),
+            }
+        )
+
     scheduler_log = _get_attr(scheduler, ["event_log", "state_transitions"], [])
     merged_log = [str(x) for x in list(scheduler_log or [])]
     if event_log:
@@ -193,6 +269,7 @@ def serialize_state(
             "io_queue": io_queue,
             "gantt": gantt,
             "io_gantt": io_gantt,
+            "mem_gantt": list(_default_memory(settings, memory_state).get("mem_gantt", [])),
             "completed": completed,
             "metrics": {
                 "avg_wt": _safe_float(avg_wt, 0.0),
@@ -203,7 +280,9 @@ def serialize_state(
                 "throughput": _safe_float(throughput, 0.0),
             },
             "per_process": per_process,
+            "processes": process_summary,
             "event_log": merged_log,
+            "memory": _default_memory(settings, memory_state),
         }
     )
 
@@ -215,11 +294,16 @@ def serialize_state(
         "io_queue",
         "gantt",
         "io_gantt",
+        "mem_gantt",
         "completed",
         "per_process",
+        "processes",
         "event_log",
     ]:
         if key not in state or state[key] is None:
             state[key] = []
+
+    if "memory" not in state or not isinstance(state["memory"], dict):
+        state["memory"] = _default_memory(settings, memory_state)
 
     return state

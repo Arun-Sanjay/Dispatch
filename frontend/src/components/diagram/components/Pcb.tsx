@@ -6,28 +6,28 @@ import { RoundedBox } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
-import { ioCurve, memCurve, readyCurve } from "@/components/diagram/paths";
+import { ioBusCurve, readyLaneCurve, returnLaneCurve } from "@/components/diagram/paths";
 
 type PcbProps = {
   readyPulseRef: MutableRefObject<number>;
-  memoryPulseRef: MutableRefObject<number>;
   ioPulseRef: MutableRefObject<number>;
+  returnPulseRef: MutableRefObject<number>;
 };
 
-export function Pcb({ readyPulseRef, memoryPulseRef, ioPulseRef }: PcbProps) {
+export function Pcb({ readyPulseRef, ioPulseRef, returnPulseRef }: PcbProps) {
   const readyTraceMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
-  const memTraceMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
   const ioTraceMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const returnTraceMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
 
   useFrame(() => {
     if (readyTraceMatRef.current) {
-      readyTraceMatRef.current.emissiveIntensity = 0.08 + readyPulseRef.current * 1.2;
-    }
-    if (memTraceMatRef.current) {
-      memTraceMatRef.current.emissiveIntensity = 0.08 + memoryPulseRef.current * 1.3;
+      readyTraceMatRef.current.emissiveIntensity = 0.07 + readyPulseRef.current * 1.05;
     }
     if (ioTraceMatRef.current) {
-      ioTraceMatRef.current.emissiveIntensity = 0.08 + ioPulseRef.current * 1.1;
+      ioTraceMatRef.current.emissiveIntensity = 0.07 + ioPulseRef.current * 1.05;
+    }
+    if (returnTraceMatRef.current) {
+      returnTraceMatRef.current.emissiveIntensity = 0.07 + returnPulseRef.current * 1.05;
     }
   });
 
@@ -53,37 +53,37 @@ export function Pcb({ readyPulseRef, memoryPulseRef, ioPulseRef }: PcbProps) {
         </mesh>
       ))}
 
-      <mesh>
-        <tubeGeometry args={[readyCurve, 80, 0.03, 10, false]} />
+      <mesh position={[0, 0.01, 0]}>
+        <tubeGeometry args={[readyLaneCurve, 80, 0.027, 10, false]} />
         <meshStandardMaterial
           ref={readyTraceMatRef}
           color="#0b1220"
           emissive="#67e8f9"
-          emissiveIntensity={0.08}
+          emissiveIntensity={0.07}
           roughness={0.35}
           metalness={0.76}
         />
       </mesh>
 
-      <mesh>
-        <tubeGeometry args={[memCurve, 80, 0.03, 10, false]} />
-        <meshStandardMaterial
-          ref={memTraceMatRef}
-          color="#0b1220"
-          emissive="#60a5fa"
-          emissiveIntensity={0.08}
-          roughness={0.35}
-          metalness={0.76}
-        />
-      </mesh>
-
-      <mesh>
-        <tubeGeometry args={[ioCurve, 80, 0.03, 10, false]} />
+      <mesh position={[0, 0.01, 0]}>
+        <tubeGeometry args={[ioBusCurve, 80, 0.027, 10, false]} />
         <meshStandardMaterial
           ref={ioTraceMatRef}
           color="#0b1220"
           emissive="#f59e0b"
-          emissiveIntensity={0.08}
+          emissiveIntensity={0.07}
+          roughness={0.35}
+          metalness={0.76}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.01, 0]}>
+        <tubeGeometry args={[returnLaneCurve, 80, 0.027, 10, false]} />
+        <meshStandardMaterial
+          ref={returnTraceMatRef}
+          color="#0b1220"
+          emissive="#4ade80"
+          emissiveIntensity={0.07}
           roughness={0.35}
           metalness={0.76}
         />

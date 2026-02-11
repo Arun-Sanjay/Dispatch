@@ -10,7 +10,7 @@ function parseEventTime(eventText: string): number | null {
 }
 
 export function getReplayMax(state: SimulatorState): number {
-  return Math.max(state.time, state.gantt.length - 1, state.io_gantt.length - 1, 0);
+  return Math.max(state.time, state.gantt.length - 1, state.io_gantt.length - 1, state.mem_gantt.length - 1, 0);
 }
 
 function getReplayEventLog(state: SimulatorState, t: number): string[] {
@@ -44,6 +44,12 @@ export function getReplayViewState(liveState: SimulatorState, requestedT: number
     time: t,
     running,
     io_active: ioActive,
+    mem_gantt: liveState.mem_gantt,
+    memory: {
+      ...liveState.memory,
+      mem_gantt: liveState.memory.mem_gantt.length > 0 ? liveState.memory.mem_gantt : liveState.mem_gantt,
+      recent_steps: liveState.memory.recent_steps.filter((step) => step.t <= t),
+    },
     event_log: [...queueNote, ...getReplayEventLog(liveState, t)],
   };
 }

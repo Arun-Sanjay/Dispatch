@@ -1,23 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { Environment } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { Bloom, DepthOfField, EffectComposer, Noise, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 
+import { parseSimEvents } from "@/components/diagram/events";
 import { Hotspots } from "@/components/diagram/Hotspots";
-import { IoController } from "@/components/diagram/components/IoController";
+import { DoneBay } from "@/components/diagram/components/DoneBay";
+import { IoBlock } from "@/components/diagram/components/IoBlock";
 import { Pcb } from "@/components/diagram/components/Pcb";
-import { QueueCartridge } from "@/components/diagram/components/QueueCartridge";
+import { ReadyQueueLane } from "@/components/diagram/components/ReadyQueueLane";
 import { Ram } from "@/components/diagram/components/Ram";
 import { Soc } from "@/components/diagram/components/Soc";
-import { ioCurve, memCurve, readyCurve } from "@/components/diagram/paths";
-import { getPidColor } from "@/components/diagram/pidColors";
+import { TokenAnimator } from "@/components/diagram/components/TokenAnimator";
 import { Timeline3D } from "@/components/diagram/Timeline3D";
 import { type FocusTarget, useCinematicCamera } from "@/components/diagram/useCinematicCamera";
-import { useSimEffects } from "@/components/diagram/useSimEffects";
+import {
+  applyEventTransition,
+  ensureTokensForState,
+  queueListFromState,
+  syncQueueSlots,
+  type SceneAnchors,
+  type TokenRegistry,
+} from "@/components/diagram/state";
 import type { SimulatorState } from "@/lib/types";
 
 type SceneProps = {
@@ -30,26 +38,6 @@ type SceneProps = {
   isReplay?: boolean;
 };
 
-type PacketRoute = "io" | "mem" | "ready";
-
-type Packet = {
-  id: number;
-  pid: string;
-  route: PacketRoute;
-  startTs: number;
-  durationMs: number;
-};
-
-const CURVE_BY_ROUTE: Record<PacketRoute, THREE.CatmullRomCurve3> = {
-  ready: readyCurve,
-  mem: memCurve,
-  io: ioCurve,
-};
-
-function easeInOutCubic(value: number) {
-  return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
-}
-
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
@@ -57,7 +45,6 @@ function clamp01(value: number) {
 function extractLastSliceTimeForPid(eventLog: string[], pid: string): number | null {
   if (!pid || pid === "IDLE") return null;
   const pattern = new RegExp(`t\\s*=\\s*(\\d+):\\s*${pid}\\s+.*time slice`, "i");
-
   for (let i = eventLog.length - 1; i >= 0; i -= 1) {
     const line = eventLog[i];
     if (!pattern.test(line)) continue;
@@ -69,11 +56,26 @@ function extractLastSliceTimeForPid(eventLog: string[], pid: string): number | n
   return null;
 }
 
-function queueForCartridge(state: SimulatorState): string[] {
-  if (state.algorithm === "MLQ") {
-    return [...(state.sys_queue ?? []), ...(state.user_queue ?? [])];
+function buildAnchors(): SceneAnchors {
+  const queueSlots: THREE.Vector3[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    queueSlots.push(new THREE.Vector3(1.58 + i * 0.34, 0.47, 2.02));
   }
-  return state.ready_queue;
+
+  const doneSlots: THREE.Vector3[] = [];
+  for (let i = 0; i < 6; i += 1) {
+    doneSlots.push(new THREE.Vector3(4.04 + i * 0.28, 1.14, -0.14));
+  }
+
+  return {
+    queueSlots,
+    queueExit: new THREE.Vector3(2.95, 0.47, 1.82),
+    queueReturn: new THREE.Vector3(2.2, 0.47, 1.82),
+    cpuPort: new THREE.Vector3(0.04, 0.64, 1.28),
+    ioPort: new THREE.Vector3(3.78, 0.42, -0.28),
+    ioReturn: new THREE.Vector3(2.2, 0.47, 1.82),
+    doneSlots,
+  };
 }
 
 export function Scene({
@@ -86,31 +88,24 @@ export function Scene({
   isReplay = false,
 }: SceneProps) {
   const { focus } = useCinematicCamera("OVERVIEW");
+  const focusMode = view === "CPU_FOCUS";
+
+  const registryRef = useRef<TokenRegistry>(new Map());
+  const lastProcessedEventIndexRef = useRef(0);
 
   const readyPulseRef = useRef(0);
   const ioPulseRef = useRef(0);
-  const memoryPulseRef = useRef(0);
-  const nextPacketIdRef = useRef(1);
+  const returnPulseRef = useRef(0);
 
-  const packetMeshRefs = useRef<Record<number, THREE.Mesh | null>>({});
-  const packetPosRef = useRef(new THREE.Vector3());
-
-  const [packets, setPackets] = useState<Packet[]>([]);
-  const packetsRef = useRef<Packet[]>([]);
-  const [dispatchToken, setDispatchToken] = useState(0);
-  const [dispatchPid, setDispatchPid] = useState<string | null>(null);
-  const [completionTick, setCompletionTick] = useState(0);
-
-  const queueList = useMemo(() => queueForCartridge(state), [state]);
+  const anchors = useMemo(() => buildAnchors(), []);
+  const queueList = useMemo(() => queueListFromState(state), [state]);
 
   const quantumProgress = useMemo(() => {
     if (!(state.algorithm === "RR" || state.algorithm === "MLQ")) return 0;
     if (state.running === "IDLE") return 0;
     const quantum = Math.max(1, state.quantum);
     const lastSlice = extractLastSliceTimeForPid(state.event_log, state.running);
-    if (lastSlice !== null) {
-      return clamp01((state.time - lastSlice) / quantum);
-    }
+    if (lastSlice !== null) return clamp01((state.time - lastSlice) / quantum);
     return clamp01((state.time % quantum) / quantum);
   }, [state.algorithm, state.event_log, state.quantum, state.running, state.time]);
 
@@ -119,99 +114,69 @@ export function Scene({
   }, [focus, view]);
 
   useEffect(() => {
-    packetsRef.current = packets;
-  }, [packets]);
+    ensureTokensForState(registryRef.current, state);
 
-  const spawnPacket = useCallback(
-    (route: PacketRoute, pid: string) => {
-      if (isReplay && !playbackRunning) return;
-      const packet: Packet = {
-        id: nextPacketIdRef.current++,
-        pid,
-        route,
-        startTs: performance.now(),
-        durationMs:
-          route === "ready"
-            ? 360 + Math.random() * 100
-            : route === "io"
-              ? 520 + Math.random() * 120
-              : 300 + Math.random() * 100,
-      };
-      setPackets((previous) => {
-        const merged = [...previous, packet];
-        return merged.length > 12 ? merged.slice(merged.length - 12) : merged;
-      });
-    },
-    [isReplay, playbackRunning],
-  );
+    const queue = queueListFromState(state);
+    const queueSlotByPid = new Map<string, number>();
+    for (let i = 0; i < Math.min(queue.length, 8); i += 1) queueSlotByPid.set(queue[i], i);
 
-  const handlers = useMemo(
-    () => ({
-      onDispatch: (pid: string) => {
-        if (isReplay && !playbackRunning) return;
-        setDispatchPid(pid);
-        setDispatchToken((value) => value + 1);
+    if (isReplay && !playbackRunning) {
+      lastProcessedEventIndexRef.current = state.event_log.length;
+      for (const token of registryRef.current.values()) {
+        token.pathName = undefined;
+        token.pathProgress = 0;
+        token.lastUpdateT = state.time;
+        if (state.completed.includes(token.pid)) {
+          token.logicalLocation = "DONE_BAY";
+          continue;
+        }
+        if (state.running === token.pid) {
+          token.logicalLocation = "CPU_PORT";
+          continue;
+        }
+        if (state.io_active === token.pid || state.io_queue.includes(token.pid)) {
+          token.logicalLocation = "IO_BLOCK";
+          continue;
+        }
+        const slot = queueSlotByPid.get(token.pid);
+        token.logicalLocation = "QUEUE_SLOT";
+        token.queueSlotIndex = typeof slot === "number" ? slot : 0;
+      }
+      return;
+    }
+
+    if (state.event_log.length < lastProcessedEventIndexRef.current) {
+      lastProcessedEventIndexRef.current = 0;
+    }
+
+    const nextIndex = lastProcessedEventIndexRef.current;
+    const newEvents = parseSimEvents(state.event_log, nextIndex);
+    lastProcessedEventIndexRef.current = state.event_log.length;
+
+    for (const event of newEvents) {
+      applyEventTransition(registryRef.current, event);
+      if (event.from === "READY" && event.to === "RUNNING") {
         readyPulseRef.current = 1;
-        spawnPacket("ready", pid);
-      },
-      onIoIngress: (pid: string) => {
-        if (isReplay && !playbackRunning) return;
+      } else if (event.from === "RUNNING" && event.to === "WAITING") {
         ioPulseRef.current = 1;
-        spawnPacket("io", pid);
-      },
-      onComplete: () => {
-        if (isReplay && !playbackRunning) return;
-        memoryPulseRef.current = 1;
-        setCompletionTick((value) => value + 1);
-        spawnPacket("mem", state.running === "IDLE" ? "DONE" : state.running);
+      } else if (
+        (event.from === "WAITING" && event.to === "READY") ||
+        (event.from === "RUNNING" && event.to === "READY")
+      ) {
+        returnPulseRef.current = 1;
+      } else if (event.from === "RUNNING" && event.to === "DONE") {
         onCompletionPulse?.();
-      },
-      onQueueChanged: () => {
-        if (isReplay && !playbackRunning) return;
-        readyPulseRef.current = 1;
-      },
-    }),
-    [isReplay, onCompletionPulse, playbackRunning, spawnPacket, state.running],
-  );
+      }
+    }
 
-  useSimEffects(state, handlers);
+    syncQueueSlots(registryRef.current, state);
+  }, [isReplay, onCompletionPulse, playbackRunning, state]);
 
   useFrame((_ctx, delta) => {
     readyPulseRef.current = Math.max(0, readyPulseRef.current - delta * 2.8);
     ioPulseRef.current = Math.max(0, ioPulseRef.current - delta * 2.6);
-    memoryPulseRef.current = Math.max(0, memoryPulseRef.current - delta * 3.4);
-
-    const now = performance.now();
-    let expired = false;
-
-    for (const packet of packetsRef.current) {
-      const mesh = packetMeshRefs.current[packet.id];
-      if (!mesh) continue;
-
-      const raw = (now - packet.startTs) / packet.durationMs;
-      if (raw >= 1) {
-        mesh.visible = false;
-        expired = true;
-        continue;
-      }
-
-      const eased = easeInOutCubic(clamp01(raw));
-      const curve = CURVE_BY_ROUTE[packet.route];
-      curve.getPointAt(eased, packetPosRef.current);
-      packetPosRef.current.y += Math.sin(Math.PI * eased) * (packet.route === "ready" ? 0.07 : 0.05);
-
-      mesh.visible = true;
-      mesh.position.copy(packetPosRef.current);
-      const material = mesh.material as THREE.MeshStandardMaterial;
-      material.emissiveIntensity = 0.5 + (1 - eased) * 0.9;
-    }
-
-    if (expired) {
-      setPackets((previous) => previous.filter((packet) => now - packet.startTs < packet.durationMs));
-    }
+    returnPulseRef.current = Math.max(0, returnPulseRef.current - delta * 2.8);
   });
-
-  const focusMode = view === "CPU_FOCUS";
 
   return (
     <>
@@ -231,25 +196,26 @@ export function Scene({
         <meshStandardMaterial color="#080b12" roughness={0.92} metalness={0.18} />
       </mesh>
 
-      <Pcb
-        readyPulseRef={readyPulseRef}
-        memoryPulseRef={memoryPulseRef}
-        ioPulseRef={ioPulseRef}
-      />
+      <Pcb readyPulseRef={readyPulseRef} ioPulseRef={ioPulseRef} returnPulseRef={returnPulseRef} />
+
       <Soc
         runningPid={state.running}
         algorithm={state.algorithm}
         quantumProgress={quantumProgress}
-        completionTick={completionTick}
+        completionTick={state.completed.length}
       />
-      <Ram dimmed={focusMode} />
-      <IoController ioActivePid={state.io_active} dimmed={focusMode} />
 
-      <QueueCartridge
-        queue={queueList}
-        dispatchToken={dispatchToken}
-        dispatchPid={dispatchPid}
-        visible={focusMode}
+      <ReadyQueueLane queue={queueList} focusMode={focusMode} />
+      <Ram dimmed={focusMode} />
+      <IoBlock ioActivePid={state.io_active} dimmed={focusMode} />
+      <DoneBay completedCount={state.completed.length} focusMode={focusMode} />
+
+      <TokenAnimator
+        registryRef={registryRef}
+        anchors={anchors}
+        state={state}
+        isReplay={isReplay}
+        playbackRunning={playbackRunning}
       />
 
       <Timeline3D
@@ -259,29 +225,6 @@ export function Scene({
         tickMs={playbackTickMs ?? state.tick_ms}
         running={playbackRunning}
       />
-
-      {packets.map((packet) => {
-        const color = getPidColor(packet.pid);
-        return (
-          <mesh
-            key={packet.id}
-            ref={(mesh) => {
-              packetMeshRefs.current[packet.id] = mesh;
-            }}
-            visible={false}
-            position={[0, 0.4, 0]}
-          >
-            <sphereGeometry args={[packet.route === "ready" ? 0.08 : 0.07, 16, 16]} />
-            <meshStandardMaterial
-              color={color}
-              emissive={color}
-              emissiveIntensity={0.75}
-              roughness={0.2}
-              metalness={0.42}
-            />
-          </mesh>
-        );
-      })}
 
       <Hotspots
         selected={view}

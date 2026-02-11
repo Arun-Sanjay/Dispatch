@@ -18,6 +18,49 @@ function getErrorMessage(error: unknown): string {
   return "WebSocket error";
 }
 
+function normalizeStateShape(raw: SimulatorState): SimulatorState {
+  const memory = raw.memory ?? {
+    mode: "CPU_ONLY",
+    algo: "LRU",
+    frames: [],
+    fault_penalty: 2,
+    faults: 0,
+    hits: 0,
+    hit_ratio: 0,
+    recent_steps: [],
+    mem_gantt: [],
+  };
+  const normalizedFrames = Array.isArray(memory.frames)
+    ? memory.frames
+    : Array.from({ length: Number(memory.frames_count ?? memory.num_frames ?? 0) }, (_, idx) => ({
+        pfn: idx,
+        pid: null,
+        vpn: null,
+        last_used: 0,
+        freq: 0,
+        ref_bit: 0,
+      }));
+  const normalizedNumFrames = Number(memory.num_frames ?? memory.frames_count ?? normalizedFrames.length ?? 0) || 0;
+  const memTimeline = raw.mem_gantt ?? memory.mem_gantt ?? [];
+  return {
+    ...raw,
+    mem_gantt: Array.isArray(memTimeline) ? memTimeline : [],
+    processes: Array.isArray(raw.processes) ? raw.processes : [],
+    memory: {
+      ...memory,
+      enabled: memory.enabled ?? memory.mode ?? "CPU_ONLY",
+      mode: memory.mode ?? memory.enabled ?? "CPU_ONLY",
+      num_frames: normalizedNumFrames || normalizedFrames.length,
+      frames_count: normalizedNumFrames || normalizedFrames.length,
+      frames: normalizedFrames,
+      mem_gantt: Array.isArray(memory.mem_gantt) && memory.mem_gantt.length > 0 ? memory.mem_gantt : memTimeline,
+      page_tables: memory.page_tables ?? {},
+      last_translation_log: Array.isArray(memory.last_translation_log) ? memory.last_translation_log : [],
+      recent_steps: Array.isArray(memory.recent_steps) ? memory.recent_steps : [],
+    },
+  };
+}
+
 export function createSimSocket(url: string) {
   let ws: WebSocket | null = null;
   let stateHandler: StateHandler | null = null;
@@ -45,7 +88,7 @@ export function createSimSocket(url: string) {
         try {
           const parsed = JSON.parse(String(event.data)) as StateMessage;
           if (parsed?.type === "state" && parsed.data) {
-            stateHandler?.(parsed.data);
+            stateHandler?.(normalizeStateShape(parsed.data));
           }
         } catch {
           // Ignore malformed frames.

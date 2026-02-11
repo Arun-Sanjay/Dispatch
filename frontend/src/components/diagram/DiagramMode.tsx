@@ -69,18 +69,32 @@ export function DiagramMode({
           </div>
         </div>
 
-        {view === "CPU_FOCUS" ? (
-          <div className="mb-4">
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full border-white/20 bg-white/5 text-zinc-200 hover:bg-white/10"
-              onClick={() => setView("OVERVIEW")}
-            >
-              Back To Overview
-            </Button>
-          </div>
-        ) : null}
+        <div className="mb-4 grid grid-cols-2 gap-2">
+          <Button
+            size="sm"
+            variant={view === "CPU_FOCUS" ? "default" : "outline"}
+            className={
+              view === "CPU_FOCUS"
+                ? "bg-white text-black hover:bg-zinc-200"
+                : "border-white/20 bg-white/5 text-zinc-200 hover:bg-white/10"
+            }
+            onClick={() => setView("CPU_FOCUS")}
+          >
+            Focus CPU
+          </Button>
+          <Button
+            size="sm"
+            variant={view === "OVERVIEW" ? "default" : "outline"}
+            className={
+              view === "OVERVIEW"
+                ? "bg-white text-black hover:bg-zinc-200"
+                : "border-white/20 bg-white/5 text-zinc-200 hover:bg-white/10"
+            }
+            onClick={() => setView("OVERVIEW")}
+          >
+            Overview
+          </Button>
+        </div>
 
         <div className="space-y-3 text-sm">
           <section className="rounded-xl border border-white/10 bg-zinc-900/45 p-3">

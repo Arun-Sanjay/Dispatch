@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException
 
 from app.engine import Process, compare_all_algorithms
+from app.memory_sim import normalize_memory_algo, run_memory_algorithm
 from app.session import (
     add_process,
     clear_added_processes,
@@ -159,6 +160,11 @@ def sim_add(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, b
     return {"ok": True}
 
 
+@router.post("/sim/add_process")
+def sim_add_process(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, bool]:
+    return sim_add(payload)
+
+
 @router.post("/sim/clear_added")
 def sim_clear_added() -> Dict[str, bool]:
     clear_added_processes()
@@ -218,6 +224,25 @@ def sim_compare(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[st
         "results": normalized,
         "workload": _compute_workload(processes),
     }
+
+
+@router.post("/memory/run")
+def memory_run(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    frames = int(payload.get("frames", 4))
+    algo = normalize_memory_algo(payload.get("algo", "LRU"), "LRU")
+    refs_input = payload.get("refs", [])
+    if not isinstance(refs_input, list):
+        raise HTTPException(status_code=422, detail="refs must be an array of integers")
+
+    try:
+        refs = [int(value) for value in refs_input]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="refs must contain only integers")
+
+    if frames <= 0:
+        raise HTTPException(status_code=422, detail="frames must be >= 1")
+
+    return run_memory_algorithm(frames, algo, refs)
 
 
 @router.post("/sim/reset")
